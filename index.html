@@ -247,7 +247,8 @@
             return { date, amount, merchant, rawText: text, note: '' };
         };
 
-        const compressImage = async (imageSource, maxWidth = 600, quality = 0.5) => {
+        // 解像度と品質を向上 (600px -> 1600px, 0.5 -> 0.8)
+        const compressImage = async (imageSource, maxWidth = 1600, quality = 0.8) => {
             return new Promise((resolve, reject) => {
                 const img = new Image();
                 img.crossOrigin = "Anonymous";
@@ -272,6 +273,43 @@
                 } else {
                     img.src = imageSource;
                 }
+            });
+        };
+
+        // OCR用の画像補正処理（グレースケール化＋コントラスト強調）
+        const preprocessImageForOCR = async (imageSource) => {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data = imageData.data;
+                    
+                    // コントラスト調整係数
+                    const contrast = 1.2;
+                    const intercept = 128 * (1 - contrast);
+                    
+                    for (let i = 0; i < data.length; i += 4) {
+                        // グレースケール化 (加重平均)
+                        const avg = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+                        
+                        // コントラスト適用
+                        let newVal = avg * contrast + intercept;
+                        newVal = Math.min(255, Math.max(0, newVal)); 
+                        
+                        data[i] = newVal;     // R
+                        data[i + 1] = newVal; // G
+                        data[i + 2] = newVal; // B
+                    }
+                    ctx.putImageData(imageData, 0, 0);
+                    resolve(canvas.toDataURL('image/jpeg', 0.9));
+                };
+                img.src = imageSource;
             });
         };
 
@@ -1137,17 +1175,24 @@
                         await page.render({ canvasContext: ctx, viewport }).promise;
                         attachment = await compressImage(canvas.toDataURL());
                         
+                        setProcessStatus('画像補正中...');
+                        const preprocessed = await preprocessImageForOCR(canvas.toDataURL());
+
                         setProcessStatus('OCR解析中...');
-                        const worker = await Tesseract.createWorker('jpn', 1, { logger: m => m.status === 'recognizing text' && setScanProgress(m.progress) });
-                        const { data } = await worker.recognize(canvas.toDataURL());
+                        const worker = await Tesseract.createWorker(['jpn', 'eng'], 1, { logger: m => m.status === 'recognizing text' && setScanProgress(m.progress) });
+                        const { data } = await worker.recognize(preprocessed);
                         text = data.text;
                         await worker.terminate();
                     } else {
                         setProcessStatus('画像圧縮中...');
                         attachment = await compressImage(file);
+                        
+                        setProcessStatus('画像補正中...');
+                        const preprocessed = await preprocessImageForOCR(attachment);
+
                         setProcessStatus('OCR解析中...');
-                        const worker = await Tesseract.createWorker('jpn', 1, { logger: m => m.status === 'recognizing text' && setScanProgress(m.progress) });
-                        const { data } = await worker.recognize(file);
+                        const worker = await Tesseract.createWorker(['jpn', 'eng'], 1, { logger: m => m.status === 'recognizing text' && setScanProgress(m.progress) });
+                        const { data } = await worker.recognize(preprocessed);
                         text = data.text;
                         await worker.terminate();
                     }
