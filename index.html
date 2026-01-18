@@ -351,13 +351,13 @@
 
         // --- Forms & Views ---
 
-        const ExpenseForm = ({ initialData, onSave, onCancel, isModal = true, title = "内容の確認・編集", categories, merchants, notes }) => {
+        const ExpenseForm = ({ initialData, onSave, onCancel, isModal = true, title = "内容の確認・編集", categories, merchants = [], notes }) => {
             const [formData, setFormData] = useState(initialData);
 
-            // ユニークIDを生成して datalist の ID 重複を防ぐ
-            const formId = React.useId();
-            const merchantListId = `merchant-options-${formId}`;
-            const noteListId = `note-options-${formId}`;
+            // ユニークIDを生成して datalist の ID 重複を防ぐ。安全のためにコロンを除去。
+            const safeId = React.useId().replace(/:/g, '');
+            const merchantListId = `merchant-options-${safeId}`;
+            const noteListId = `note-options-${safeId}`;
 
             useEffect(() => { setFormData(initialData); }, [initialData]);
 
@@ -1103,7 +1103,11 @@
 
                     const savedSettings = await db.settings.get('general');
                     if (savedSettings) {
-                        setSettings(savedSettings);
+                        setSettings({
+                             categories: savedSettings.categories || DEFAULT_CATEGORIES,
+                             merchants: savedSettings.merchants || DEFAULT_MERCHANTS,
+                             notes: savedSettings.notes || DEFAULT_NOTES
+                        });
                     } else {
                         await db.settings.put({ id: 'general', ...settings });
                     }
