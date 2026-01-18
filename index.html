@@ -1036,6 +1036,7 @@
             const [newNote, setNewNote] = useState('');
             const [isFixedModalOpen, setIsFixedModalOpen] = useState(false);
             const [editingFixed, setEditingFixed] = useState(null);
+            const fileInputRef = useRef(null);
 
             const handleAdd = (list, item, key) => {
                 if(!item.trim() || list.includes(item.trim())) return;
@@ -1043,6 +1044,66 @@
             };
             const handleDel = (list, item, key) => {
                 if(confirm('削除しますか？')) onUpdateSettings({ [key]: list.filter(i => i !== item) });
+            };
+
+            const handleExport = async () => {
+                try {
+                    const allExpenses = await db.expenses.toArray();
+                    const allFixed = await db.fixedExpenses.toArray();
+                    const allSettings = await db.settings.toArray();
+                    
+                    const data = {
+                        version: 1,
+                        timestamp: new Date().toISOString(),
+                        expenses: allExpenses,
+                        fixedExpenses: allFixed,
+                        settings: allSettings
+                    };
+
+                    const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `receipt_manager_backup_${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } catch (e) {
+                    console.error(e);
+                    alert("エクスポートに失敗しました");
+                }
+            };
+
+            const handleImport = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        if (!data.expenses || !data.fixedExpenses) throw new Error("無効なデータ形式です");
+
+                        if (confirm(`現在のデータを全て削除し、バックアップファイルから復元しますか？\nデータ日時: ${data.timestamp || '不明'}\n件数: ${data.expenses.length}件`)) {
+                            await db.transaction('rw', db.expenses, db.fixedExpenses, db.settings, async () => {
+                                await db.expenses.clear();
+                                await db.fixedExpenses.clear();
+                                await db.settings.clear();
+                                
+                                await db.expenses.bulkAdd(data.expenses);
+                                await db.fixedExpenses.bulkAdd(data.fixedExpenses);
+                                if (data.settings) await db.settings.bulkAdd(data.settings);
+                            });
+                            alert("復元が完了しました。画面を更新します。");
+                            window.location.reload();
+                        }
+                    } catch (err) {
+                        alert("読み込みエラー: " + err.message);
+                    }
+                    e.target.value = ''; // Reset input
+                };
+                reader.readAsText(file);
             };
 
             return (
@@ -1092,6 +1153,31 @@
                                 ))}
                             </div>
                         </div>
+                        <hr />
+                        
+                        {/* Backup / Restore */}
+                        <div>
+                            <h4 className="font-bold mb-2 flex gap-2"><Icon name="Database" size={16} /> バックアップと復元</h4>
+                            <div className="flex flex-col sm:flex-row gap-4">
+                                <button onClick={handleExport} className="flex-1 bg-green-50 text-green-700 border border-green-200 px-4 py-3 rounded-lg flex items-center justify-center gap-2 hover:bg-green-100 transition-colors">
+                                    <Icon name="Download" size={20} />
+                                    <div className="text-left">
+                                        <div className="text-sm font-bold">バックアップを保存</div>
+                                        <div className="text-xs opacity-80">データをPCにダウンロード</div>
+                                    </div>
+                                </button>
+                                <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-orange-50 text-orange-700 border border-orange-200 px-4 py-3 rounded-lg flex items-center justify-center gap-2 hover:bg-orange-100 transition-colors">
+                                    <Icon name="Upload" size={20} />
+                                    <div className="text-left">
+                                        <div className="text-sm font-bold">データを復元</div>
+                                        <div className="text-xs opacity-80">保存したファイルを読み込む</div>
+                                    </div>
+                                    <input type="file" ref={fileInputRef} onChange={handleImport} accept=".json" className="hidden" />
+                                </button>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-2">※ 復元を行うと、現在のデータは全て上書きされます。</p>
+                        </div>
+
                         <hr />
                         {/* Data Reset */}
                         <div className="pt-2">
