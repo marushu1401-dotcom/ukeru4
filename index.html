@@ -354,6 +354,11 @@
         const ExpenseForm = ({ initialData, onSave, onCancel, isModal = true, title = "内容の確認・編集", categories, merchants, notes }) => {
             const [formData, setFormData] = useState(initialData);
 
+            // ユニークIDを生成して datalist の ID 重複を防ぐ
+            const formId = React.useId();
+            const merchantListId = `merchant-options-${formId}`;
+            const noteListId = `note-options-${formId}`;
+
             useEffect(() => { setFormData(initialData); }, [initialData]);
 
             const handleChange = (e) => {
@@ -392,8 +397,8 @@
                             <label className="block text-sm font-medium text-gray-700 mb-1">店舗・サービス名</label>
                             <div className="relative">
                                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icon name="Store" size={20} /></div>
-                                <input type="text" name="merchant" value={formData.merchant} onChange={handleChange} list="merchant-options" placeholder="例: セブンイレブン" className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
-                                <datalist id="merchant-options">{merchants.map((m, i) => <option key={i} value={m} />)}</datalist>
+                                <input type="text" name="merchant" value={formData.merchant} onChange={handleChange} list={merchantListId} placeholder="例: セブンイレブン" className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
+                                <datalist id={merchantListId}>{merchants.map((m, i) => <option key={i} value={m} />)}</datalist>
                             </div>
                         </div>
 
@@ -425,8 +430,8 @@
                             <label className="block text-sm font-medium text-gray-700 mb-1">備考</label>
                             <div className="relative">
                                 <div className="absolute left-3 top-3 text-gray-400"><Icon name="StickyNote" size={20} /></div>
-                                <input type="text" name="note" value={formData.note} onChange={handleChange} list="note-options" placeholder="メモ" className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
-                                <datalist id="note-options">{notes.map((n, i) => <option key={i} value={n} />)}</datalist>
+                                <input type="text" name="note" value={formData.note} onChange={handleChange} list={noteListId} placeholder="メモ" className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                                <datalist id={noteListId}>{notes.map((n, i) => <option key={i} value={n} />)}</datalist>
                             </div>
                         </div>
 
@@ -456,14 +461,23 @@
 
         const ExpenseList = ({ expenses, onDelete, onEdit, onViewImage, categories, merchants, notes }) => {
             const [filters, setFilters] = useState({ merchantKeyword: '', noteKeyword: '', category: '', dateStart: '', dateEnd: '' });
+            const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
 
             const handleFilterChange = (e) => {
                 const { name, value } = e.target;
                 setFilters(prev => ({ ...prev, [name]: value }));
             };
 
-            const filteredExpenses = useMemo(() => {
-                return expenses.filter(expense => {
+            const handleSort = (key) => {
+                setSortConfig(prev => ({
+                    key,
+                    direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+                }));
+            };
+
+            const sortedExpenses = useMemo(() => {
+                // 1. Filtering
+                const filtered = expenses.filter(expense => {
                     if (filters.merchantKeyword && !expense.merchant.toLowerCase().includes(filters.merchantKeyword.toLowerCase())) return false;
                     if (filters.noteKeyword && !(expense.note || '').toLowerCase().includes(filters.noteKeyword.toLowerCase())) return false;
                     if (filters.category && expense.category !== filters.category) return false;
@@ -471,7 +485,43 @@
                     if (filters.dateEnd && expense.date > filters.dateEnd) return false;
                     return true;
                 });
-            }, [expenses, filters]);
+
+                // 2. Sorting
+                return filtered.sort((a, b) => {
+                    let aVal = a[sortConfig.key];
+                    let bVal = b[sortConfig.key];
+
+                    // Handle null/undefined
+                    if (aVal === null || aVal === undefined) aVal = '';
+                    if (bVal === null || bVal === undefined) bVal = '';
+
+                    if (typeof aVal === 'string') aVal = aVal.toLowerCase();
+                    if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+
+                    if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+                    if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+                    return 0;
+                });
+            }, [expenses, filters, sortConfig]);
+
+            const SortIcon = ({ columnKey }) => {
+                if (sortConfig.key !== columnKey) return <Icon name="ChevronsUpDown" size={14} className="ml-1 text-gray-300" />;
+                return sortConfig.direction === 'asc' 
+                    ? <Icon name="ChevronUp" size={14} className="ml-1 text-blue-600" />
+                    : <Icon name="ChevronDown" size={14} className="ml-1 text-blue-600" />;
+            };
+
+            const SortHeader = ({ label, columnKey, align = "left", className = "" }) => (
+                <th 
+                    className={`px-6 py-3 font-medium whitespace-nowrap cursor-pointer hover:bg-gray-100 transition-colors select-none ${className}`} 
+                    onClick={() => handleSort(columnKey)}
+                    style={{ textAlign: align }}
+                >
+                    <div className={`flex items-center ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'}`}>
+                        {label} <SortIcon columnKey={columnKey} />
+                    </div>
+                </th>
+            );
 
             return (
                 <div className="space-y-4">
@@ -503,7 +553,7 @@
                         </div>
                     </div>
 
-                    {filteredExpenses.length === 0 ? (
+                    {sortedExpenses.length === 0 ? (
                         <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-100">
                             <div className="bg-gray-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
                                 <Icon name="List" size={32} className="text-gray-400" />
@@ -516,17 +566,17 @@
                                 <table className="w-full">
                                     <thead className="bg-gray-50 text-gray-500 text-sm">
                                         <tr>
-                                            <th className="px-6 py-3 text-left font-medium whitespace-nowrap">日付</th>
+                                            <SortHeader label="日付" columnKey="date" />
                                             <th className="px-6 py-3 text-left font-medium whitespace-nowrap">画像</th>
-                                            <th className="px-6 py-3 text-left font-medium whitespace-nowrap">店舗・内容</th>
-                                            <th className="px-6 py-3 text-left font-medium whitespace-nowrap">カテゴリ</th>
+                                            <SortHeader label="店舗・内容" columnKey="merchant" />
+                                            <SortHeader label="カテゴリ" columnKey="category" />
                                             <th className="px-6 py-3 text-left font-medium min-w-[150px]">備考</th>
-                                            <th className="px-6 py-3 text-right font-medium whitespace-nowrap">金額</th>
+                                            <SortHeader label="金額" columnKey="amount" align="right" />
                                             <th className="px-6 py-3 text-center font-medium whitespace-nowrap">操作</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                        {filteredExpenses.map((expense) => (
+                                        {sortedExpenses.map((expense) => (
                                             <tr key={expense.id} className="hover:bg-gray-50 transition-colors group">
                                                 <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">{expense.date}</td>
                                                 <td className="px-6 py-4">
