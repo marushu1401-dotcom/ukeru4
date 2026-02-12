@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Receipt Manager (Local)</title>
+    <title>減衰計算表</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -12,1459 +12,539 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
-    <!-- Prop Types (Recharts dependency) -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-    
-    <!-- Recharts -->
-    <script src="https://unpkg.com/recharts@2.10.3/umd/Recharts.min.js"></script>
-    
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-
-    <!-- Dexie.js (Local Database) -->
-    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
-
-    <!-- Tesseract.js -->
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    
-    <!-- PDF.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script>
-        if (window.pdfjsLib) {
-            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        }
-    </script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
 
     <style>
-        @media print {
-            body * { visibility: hidden; }
-            #matrix-calendar-container, #matrix-calendar-container * { visibility: visible; }
-            #matrix-calendar-container {
-                position: absolute; left: 0; top: 0; width: 100%; height: 100%;
-                overflow: visible; background: white; padding: 20px;
-            }
-            .no-print { display: none !important; }
-            @page { size: landscape; margin: 5mm; }
-        }
-        /* Custom Scrollbar for better look */
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+        body { font-family: sans-serif; }
     </style>
 </head>
-<body class="bg-gray-50 text-gray-900 font-sans">
+<body class="bg-slate-50 text-slate-800">
+
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
+        const { useState, useMemo } = React;
 
-        // --- Database Setup (Dexie.js) ---
-        const db = new Dexie('ReceiptManagerDB');
-        db.version(1).stores({
-            expenses: '++id, date, category, merchant',
-            fixedExpenses: '++id',
-            settings: 'id' 
-        });
-
-        // --- Constants ---
-        const DEFAULT_CATEGORIES = ['食費', '日用品', '交通費', '交際費', '光熱費', '趣味・娯楽', '衣服・美容', '健康・医療', '通信費', '住居費', '教育費', '保険', '税金', 'その他'];
-        const DEFAULT_MERCHANTS = ['セブンイレブン', 'ローソン', 'ファミリーマート', 'イオン', 'スーパー', 'Amazon', '楽天'];
-        const DEFAULT_NOTES = ['ランチ', 'ディナー', '消耗品', '定期代', '自分へのご褒美', '家族用', '仕事用', 'プレゼント'];
-
-        // --- Icon Component Wrapper ---
-        const Icon = ({ name, size = 20, className = "", color = "currentColor", onClick }) => {
-            const ref = useRef(null);
-
-            useEffect(() => {
-                if (ref.current && window.lucide) {
-                    ref.current.innerHTML = '';
-                    const i = document.createElement('i');
-                    i.setAttribute('data-lucide', name);
-                    ref.current.appendChild(i);
-
-                    window.lucide.createIcons({
-                        root: ref.current,
-                        nameAttrs: { width: size, height: size },
-                        attrs: {
-                            width: size,
-                            height: size,
-                            stroke: color,
-                            class: className
-                        }
-                    });
-                }
-            }, [name, size, color, className]);
-            
-            return (
-                <span 
-                    ref={ref}
-                    onClick={onClick}
-                    className={`inline-flex items-center justify-center ${onClick ? 'cursor-pointer' : ''}`}
-                    style={{ width: size, height: size }}
-                />
-            );
-        };
-
-        // --- Helper Functions ---
-        const getHolidayName = (date) => {
-            const y = date.getFullYear();
-            const m = date.getMonth() + 1;
-            const d = date.getDate();
-            
-            if (m === 1 && d === 1) return "元日";
-            if (m === 2 && d === 11) return "建国記念の日";
-            if (m === 2 && d === 23) return "天皇誕生日";
-            if (m === 4 && d === 29) return "昭和の日";
-            if (m === 5 && d === 3) return "憲法記念日";
-            if (m === 5 && d === 4) return "みどりの日";
-            if (m === 5 && d === 5) return "こどもの日";
-            if (m === 8 && d === 11) return "山の日";
-            if (m === 11 && d === 3) return "文化の日";
-            if (m === 11 && d === 23) return "勤労感謝の日";
-
-            const getNthMonday = (year, month, n) => {
-                const firstDay = new Date(year, month - 1, 1).getDay();
-                const firstMonday = 1 + (8 - firstDay) % 7;
-                return firstMonday + (n - 1) * 7;
-            };
-
-            if (m === 1 && d === getNthMonday(y, 1, 2)) return "成人の日";
-            if (m === 7 && d === getNthMonday(y, 7, 3)) return "海の日";
-            if (m === 9 && d === getNthMonday(y, 9, 3)) return "敬老の日";
-            if (m === 10 && d === getNthMonday(y, 10, 2)) return "スポーツの日";
-
-            const vernalEquinox = Math.floor(20.8431 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
-            const autumnalEquinox = Math.floor(23.2488 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
-            if (m === 3 && d === vernalEquinox) return "春分の日";
-            if (m === 9 && d === autumnalEquinox) return "秋分の日";
-
-            const yesterday = new Date(date);
-            yesterday.setDate(d - 1);
-            if (yesterday.getDay() === 0 && getHolidayName(yesterday)) return "振替休日";
-
-            return null;
-        };
-
-        const getNextBusinessDay = (year, month, targetDay) => {
-            let date = new Date(year, month - 1, targetDay);
-            if (date.getMonth() !== month - 1) date = new Date(year, month, 0); 
-
-            for (let i = 0; i < 30; i++) {
-                const dayOfWeek = date.getDay();
-                const holiday = getHolidayName(date);
-                if (dayOfWeek === 0 || dayOfWeek === 6 || holiday) {
-                    date.setDate(date.getDate() + 1);
-                } else {
-                    return date;
-                }
-            }
-            return date;
-        };
-
-        const DATE_PATTERNS = [
-            /(\d{4})[年\.\/-](\d{1,2})[月\.\/-](\d{1,2})/,
-            /(\d{1,2})[月\.\/-](\d{1,2})[日\s]/,
-        ];
-
-        const parseReceiptText = (text) => {
-            let date = new Date().toISOString().split('T')[0];
-            let amount = 0;
-            let merchant = "";
-
-            const normalizedText = text
-                .replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
-                .replace(/[Ａ-Ｚａ-ｚ]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
-                .replace(/,/g, '');
-
-            const lines = normalizedText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-
-            for (const line of lines) {
-                for (const pattern of DATE_PATTERNS) {
-                    const match = line.match(pattern);
-                    if (match) {
-                        if (match.length === 4) {
-                            date = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
-                        } else if (match.length === 3) {
-                            const year = new Date().getFullYear();
-                            date = `${year}-${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}`;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            const excludeKeywords = ['お釣', '釣銭', '電話', 'tel', 'fax', 'no', '番', '日時', 'ポイント', '税', '預', '会員', 'カード', 'change', 'due'];
-            const totalKeywords = ['合計', '支払', '請求', 'total', 'amount', '小計'];
-
-            let foundTotal = false;
-            let maxVal = 0;
-
-            for (let i = 0; i < lines.length; i++) {
-                const lineLower = lines[i].toLowerCase();
-                const matches = lineLower.match(/\d+/g);
-                if (!matches) continue;
-
-                const lineValues = matches.map(n => parseInt(n, 10));
-                const lineMax = Math.max(...lineValues);
-
-                const isExcluded = excludeKeywords.some(k => lineLower.includes(k));
-                const isTotal = totalKeywords.some(k => lineLower.includes(k));
-
-                if (isTotal) {
-                    if (lineMax > 0) {
-                        amount = lineMax;
-                        foundTotal = true;
-                        break;
-                    } else if (i + 1 < lines.length) {
-                        const nextLineLower = lines[i+1].toLowerCase();
-                        const nextMatches = nextLineLower.match(/\d+/g);
-                        if (nextMatches) {
-                            amount = parseInt(nextMatches[0], 10);
-                            foundTotal = true;
-                            break;
-                        }
-                    }
-                }
-                if (!isExcluded && !foundTotal) {
-                    if (lineMax < 10000000 && lineMax > maxVal) maxVal = lineMax;
-                }
-            }
-
-            if (!foundTotal && maxVal > 0) amount = maxVal;
-
-            for (let i = 0; i < Math.min(6, lines.length); i++) {
-                const line = lines[i];
-                if (line.length > 2 && !/\d/.test(line) && !/レシート|領収|明細|売上/.test(line)) {
-                    merchant = line;
-                    break;
-                }
-            }
-            
-            return { date, amount, merchant, rawText: text, note: '' };
-        };
-
-        // 解像度と品質を向上 (600px -> 1600px, 0.5 -> 0.8)
-        const compressImage = async (imageSource, maxWidth = 1600, quality = 0.8) => {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                img.crossOrigin = "Anonymous";
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    let width = img.width;
-                    let height = img.height;
-
-                    if (width > maxWidth) {
-                        height = Math.round((height * maxWidth) / width);
-                        width = maxWidth;
-                    }
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-                    resolve(canvas.toDataURL('image/jpeg', quality));
-                };
-                img.onerror = reject;
-                if (imageSource instanceof Blob) {
-                    img.src = URL.createObjectURL(imageSource);
-                } else {
-                    img.src = imageSource;
-                }
-            });
-        };
-
-        // OCR用の画像補正処理（グレースケール化＋コントラスト強調）
-        const preprocessImageForOCR = async (imageSource) => {
-            return new Promise((resolve) => {
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    
-                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    const data = imageData.data;
-                    
-                    // コントラスト調整係数
-                    const contrast = 1.2;
-                    const intercept = 128 * (1 - contrast);
-                    
-                    for (let i = 0; i < data.length; i += 4) {
-                        // グレースケール化 (加重平均)
-                        const avg = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
-                        
-                        // コントラスト適用
-                        let newVal = avg * contrast + intercept;
-                        newVal = Math.min(255, Math.max(0, newVal)); 
-                        
-                        data[i] = newVal;     // R
-                        data[i + 1] = newVal; // G
-                        data[i + 2] = newVal; // B
-                    }
-                    ctx.putImageData(imageData, 0, 0);
-                    resolve(canvas.toDataURL('image/jpeg', 0.9));
-                };
-                img.src = imageSource;
-            });
-        };
-
-        // --- Components ---
-
-        const LoadingOverlay = ({ status, progress }) => (
-            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center flex-col text-white">
-                <Icon name="Loader2" size={48} className="animate-spin mb-4" />
-                <h3 className="text-xl font-bold">{status}</h3>
-                {progress > 0 && (
-                    <div className="w-64 bg-gray-700 rounded-full h-2.5 mt-4">
-                        <div className="bg-blue-500 h-2.5 rounded-full" style={{ width: `${progress * 100}%` }}></div>
-                    </div>
-                )}
-                <p className="mt-2 text-sm text-gray-300">少々お待ちください...</p>
-            </div>
+        // --- アイコンコンポーネント ---
+        const Icon = ({ children, className, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
         );
 
-        const FileUploader = ({ onFileProcess }) => {
-            const fileInputRef = useRef(null);
-            const [isDragging, setIsDragging] = useState(false);
+        const Activity = (props) => <Icon {...props}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></Icon>;
+        const Calculator = (props) => <Icon {...props}><rect x="4" y="2" width="16" height="20" rx="2"></rect><line x1="8" y1="6" x2="16" y2="6"></line><line x1="16" y1="14" x2="16" y2="18"></line><path d="M16 10h.01"></path><path d="M12 10h.01"></path><path d="M8 10h.01"></path><path d="M12 14h.01"></path><path d="M8 14h.01"></path><path d="M12 18h.01"></path><path d="M8 18h.01"></path></Icon>;
+        const Info = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></Icon>;
+        const RefreshCw = (props) => <Icon {...props}><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path></Icon>;
+        const CalendarIcon = (props) => <Icon {...props}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></Icon>;
+        const Hourglass = (props) => <Icon {...props}><path d="M5 22h14"></path><path d="M5 2h14"></path><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"></path><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"></path></Icon>;
+        const LineChart = (props) => <Icon {...props}><path d="M3 3v18h18"></path><path d="m19 9-5 5-4-4-3 3"></path></Icon>;
+        const AlertCircle = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></Icon>;
+        const Clock = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></Icon>;
+        const ArrowDown = (props) => <Icon {...props}><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></Icon>;
 
-            const handleFileChange = (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    onFileProcess(file);
-                    e.target.value = '';
-                }
-            };
-
-            const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
-            const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
-            const handleDrop = (e) => {
-                e.preventDefault();
-                setIsDragging(false);
-                const file = e.dataTransfer.files[0];
-                if (file && (file.type.startsWith('image/') || file.type === 'application/pdf')) {
-                    onFileProcess(file);
-                } else {
-                    alert('画像またはPDFを選択してください。');
-                }
-            };
-
-            return (
-                <div 
-                    className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer group ${
-                        isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:bg-gray-50'
-                    }`}
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                >
-                    <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*,application/pdf" className="hidden" />
-                    <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                        <Icon name="Upload" size={32} />
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-800">レシートをアップロード</h3>
-                    <p className="text-gray-500 text-sm mt-2">画像 (.jpg, .png) または PDFファイルをドロップ</p>
-                    <button className="mt-4 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100">
-                        ファイルを選択
-                    </button>
-                </div>
-            );
+        // --- ロジック ---
+        const TIME_UNITS = {
+            days: { label: '日', toSeconds: 86400 },
+            minutes: { label: '分', toSeconds: 60 },
+            seconds: { label: '秒', toSeconds: 1 },
         };
 
-        const ImageModal = ({ src, onClose }) => (
-            <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={onClose}>
-                <div className="relative max-w-4xl max-h-full">
-                    <button onClick={onClose} className="absolute -top-10 right-0 text-white hover:text-gray-300">
-                        <Icon name="X" size={32} />
-                    </button>
-                    <img src={src} alt="Preview" className="max-w-full max-h-[90vh] rounded-lg shadow-2xl" />
-                </div>
-            </div>
-        );
-
-        // --- Forms & Views ---
-
-        const ExpenseForm = ({ initialData, onSave, onCancel, isModal = true, title = "内容の確認・編集", categories, merchants = [], notes }) => {
-            const [formData, setFormData] = useState(initialData);
-
-            // ユニークIDを生成して datalist の ID 重複を防ぐ。安全のためにコロンを除去。
-            const safeId = React.useId().replace(/:/g, '');
-            const merchantListId = `merchant-options-${safeId}`;
-            const noteListId = `note-options-${safeId}`;
-
-            useEffect(() => { setFormData(initialData); }, [initialData]);
-
-            const handleChange = (e) => {
-                const { name, value } = e.target;
-                setFormData(prev => ({
-                    ...prev,
-                    [name]: name === 'amount' ? parseInt(value) || 0 : value
-                }));
-            };
-
-            const handleSubmit = (e) => {
-                e.preventDefault();
-                onSave(formData);
-            };
-
-            const Content = (
-                <div className={`bg-white rounded-2xl ${isModal ? 'shadow-xl w-full max-w-md' : 'shadow-sm border border-gray-100 w-full'}`}>
-                    <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                        <h2 className="text-xl font-bold text-gray-800">{title}</h2>
-                        {isModal && (
-                            <button onClick={onCancel} className="text-gray-400 hover:text-gray-600">
-                                <Icon name="X" size={24} />
-                            </button>
-                        )}
-                    </div>
-                    
-                    <form onSubmit={handleSubmit} className="p-6 space-y-4">
-                        {formData.attachment && isModal && (
-                            <div className="mb-4 p-2 bg-gray-50 border border-gray-200 rounded-lg flex items-center gap-2">
-                                <Icon name="Image" size={20} className="text-gray-500" />
-                                <span className="text-sm text-gray-600">画像が添付されています</span>
-                            </div>
-                        )}
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">店舗・サービス名</label>
-                            <div className="relative">
-                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icon name="Store" size={20} /></div>
-                                <input type="text" name="merchant" value={formData.merchant} onChange={handleChange} list={merchantListId} placeholder="例: セブンイレブン" className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
-                                <datalist id={merchantListId}>{merchants.map((m, i) => <option key={i} value={m} />)}</datalist>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">日付</label>
-                                <div className="relative">
-                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icon name="Calendar" size={20} /></div>
-                                    <input type="date" name="date" value={formData.date} onChange={handleChange} className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">金額 (円)</label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold">¥</span>
-                                    <input type="number" name="amount" value={formData.amount} onChange={handleChange} placeholder="0" className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
-                                </div>
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
-                            <select name="category" value={formData.category} onChange={handleChange} className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
-                                {categories.map((cat, i) => <option key={i} value={cat}>{cat}</option>)}
-                            </select>
-                        </div>
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">備考</label>
-                            <div className="relative">
-                                <div className="absolute left-3 top-3 text-gray-400"><Icon name="StickyNote" size={20} /></div>
-                                <input type="text" name="note" value={formData.note} onChange={handleChange} list={noteListId} placeholder="メモ" className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
-                                <datalist id={noteListId}>{notes.map((n, i) => <option key={i} value={n} />)}</datalist>
-                            </div>
-                        </div>
-
-                        <div className="pt-4 flex gap-3">
-                            {isModal ? (
-                                <button type="button" onClick={onCancel} className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors">キャンセル</button>
-                            ) : (
-                                <button type="button" onClick={onCancel} className="flex-1 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors">取り消す</button>
-                            )}
-                            <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2">
-                                <Icon name="Save" size={16} /> {isModal ? '保存する' : '登録する'}
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            );
-
-            if (isModal) {
-                return (
-                    <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4">
-                        {Content}
-                    </div>
-                );
+        const formatNumber = (num) => {
+            if (num === 0) return '0';
+            if (Math.abs(num) < 0.0001 || Math.abs(num) > 1000000) {
+                return num.toExponential(4);
             }
-            return Content;
+            return num.toLocaleString(undefined, { maximumFractionDigits: 4 });
         };
 
-        const ExpenseList = ({ expenses, onDelete, onEdit, onViewImage, categories, merchants, notes }) => {
-            const [filters, setFilters] = useState({ merchantKeyword: '', noteKeyword: '', category: '', dateStart: '', dateEnd: '' });
-            const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
-
-            const handleFilterChange = (e) => {
-                const { name, value } = e.target;
-                setFilters(prev => ({ ...prev, [name]: value }));
-            };
-
-            const handleSort = (key) => {
-                setSortConfig(prev => ({
-                    key,
-                    direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
-                }));
-            };
-
-            const sortedExpenses = useMemo(() => {
-                // 1. Filtering
-                const filtered = expenses.filter(expense => {
-                    if (filters.merchantKeyword && !expense.merchant.toLowerCase().includes(filters.merchantKeyword.toLowerCase())) return false;
-                    if (filters.noteKeyword && !(expense.note || '').toLowerCase().includes(filters.noteKeyword.toLowerCase())) return false;
-                    if (filters.category && expense.category !== filters.category) return false;
-                    if (filters.dateStart && expense.date < filters.dateStart) return false;
-                    if (filters.dateEnd && expense.date > filters.dateEnd) return false;
-                    return true;
-                });
-
-                // 2. Sorting
-                return filtered.sort((a, b) => {
-                    let aVal = a[sortConfig.key];
-                    let bVal = b[sortConfig.key];
-
-                    // Handle null/undefined
-                    if (aVal === null || aVal === undefined) aVal = '';
-                    if (bVal === null || bVal === undefined) bVal = '';
-
-                    if (typeof aVal === 'string') aVal = aVal.toLowerCase();
-                    if (typeof bVal === 'string') bVal = bVal.toLowerCase();
-
-                    if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
-                    if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
-                    return 0;
-                });
-            }, [expenses, filters, sortConfig]);
-
-            const SortIcon = ({ columnKey }) => {
-                if (sortConfig.key !== columnKey) return <Icon name="ChevronsUpDown" size={14} className="ml-1 text-gray-300" />;
-                return sortConfig.direction === 'asc' 
-                    ? <Icon name="ChevronUp" size={14} className="ml-1 text-blue-600" />
-                    : <Icon name="ChevronDown" size={14} className="ml-1 text-blue-600" />;
-            };
-
-            const SortHeader = ({ label, columnKey, align = "left", className = "" }) => (
-                <th 
-                    className={`px-6 py-3 font-medium whitespace-nowrap cursor-pointer hover:bg-gray-100 transition-colors select-none ${className}`} 
-                    onClick={() => handleSort(columnKey)}
-                    style={{ textAlign: align }}
-                >
-                    <div className={`flex items-center ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'}`}>
-                        {label} <SortIcon columnKey={columnKey} />
-                    </div>
-                </th>
-            );
-
-            return (
-                <div className="space-y-4">
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                        <div className="space-y-3">
-                            <div className="flex flex-col md:flex-row gap-3">
-                                <div className="relative flex-1">
-                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icon name="Store" size={16} /></div>
-                                    <input type="text" name="merchantKeyword" value={filters.merchantKeyword} onChange={handleFilterChange} list="merchant-filter-options" placeholder="店名を検索..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-                                    <datalist id="merchant-filter-options">{merchants.map((m, i) => <option key={i} value={m} />)}</datalist>
-                                </div>
-                                <div className="relative flex-1">
-                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Icon name="StickyNote" size={16} /></div>
-                                    <input type="text" name="noteKeyword" value={filters.noteKeyword} onChange={handleFilterChange} list="note-filter-options" placeholder="備考を検索..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-                                    <datalist id="note-filter-options">{notes.map((n, i) => <option key={i} value={n} />)}</datalist>
-                                </div>
-                            </div>
-                            <div className="flex gap-3 flex-wrap">
-                                <select name="category" value={filters.category} onChange={handleFilterChange} className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none min-w-[120px]">
-                                    <option value="">全カテゴリ</option>
-                                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                                <div className="flex items-center gap-2">
-                                    <input type="date" name="dateStart" value={filters.dateStart} onChange={handleFilterChange} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-                                    <span className="text-gray-400">~</span>
-                                    <input type="date" name="dateEnd" value={filters.dateEnd} onChange={handleFilterChange} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {sortedExpenses.length === 0 ? (
-                        <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-100">
-                            <div className="bg-gray-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <Icon name="List" size={32} className="text-gray-400" />
-                            </div>
-                            <h3 className="text-gray-500 font-medium">データが見つかりません</h3>
-                        </div>
-                    ) : (
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                            <div className="overflow-x-auto">
-                                <table className="w-full">
-                                    <thead className="bg-gray-50 text-gray-500 text-sm">
-                                        <tr>
-                                            <SortHeader label="日付" columnKey="date" />
-                                            <th className="px-6 py-3 text-left font-medium whitespace-nowrap">画像</th>
-                                            <SortHeader label="店舗・内容" columnKey="merchant" />
-                                            <SortHeader label="カテゴリ" columnKey="category" />
-                                            <th className="px-6 py-3 text-left font-medium min-w-[150px]">備考</th>
-                                            <SortHeader label="金額" columnKey="amount" align="right" />
-                                            <th className="px-6 py-3 text-center font-medium whitespace-nowrap">操作</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {sortedExpenses.map((expense) => (
-                                            <tr key={expense.id} className="hover:bg-gray-50 transition-colors group">
-                                                <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">{expense.date}</td>
-                                                <td className="px-6 py-4">
-                                                    {expense.attachment ? (
-                                                        <div className="w-12 h-12 rounded bg-gray-100 border border-gray-200 overflow-hidden cursor-pointer hover:opacity-80 relative group/img" onClick={() => onViewImage(expense.attachment)}>
-                                                            <img src={expense.attachment} alt="Receipt" className="w-full h-full object-cover" />
-                                                            <div className="absolute inset-0 bg-black/20 hidden group-hover/img:flex items-center justify-center text-white">
-                                                                <Icon name="Eye" size={16} />
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="w-12 h-12 rounded bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-300">
-                                                            <Icon name="Image" size={20} />
-                                                        </div>
-                                                    )}
-                                                </td>
-                                                <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{expense.merchant}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">{expense.category}</span>
-                                                </td>
-                                                <td className="px-6 py-4 text-sm text-gray-500">
-                                                    {expense.note && (
-                                                        <div className="flex items-start gap-1 max-w-xs break-words">
-                                                            <div className="mt-1"><Icon name="StickyNote" size={12} className="opacity-50" /></div>
-                                                            <span className="line-clamp-2">{expense.note}</span>
-                                                        </div>
-                                                    )}
-                                                </td>
-                                                <td className="px-6 py-4 text-sm text-gray-900 font-bold text-right whitespace-nowrap">¥{expense.amount.toLocaleString()}</td>
-                                                <td className="px-6 py-4 text-center whitespace-nowrap">
-                                                    <div className="flex items-center justify-center gap-2">
-                                                        <button onClick={() => onEdit(expense)} className="text-gray-400 hover:text-blue-500 hover:bg-blue-50 p-2 rounded-full"><Icon name="Edit2" size={16} /></button>
-                                                        <button onClick={() => onDelete(expense.id)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full"><Icon name="Trash2" size={16} /></button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
+        const formatDate = (date) => {
+            if (!date || isNaN(date.getTime())) return '-';
+            const pad = (n) => n.toString().padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
         };
 
-        const DashboardChart = ({ expenses }) => {
-            const Recharts = window.Recharts || {};
-            const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } = Recharts;
-            
-            const data = useMemo(() => {
-                const map = {};
-                expenses.forEach(e => { map[e.category] = (map[e.category] || 0) + e.amount; });
-                return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-            }, [expenses]);
-
-            if (!BarChart || data.length === 0) return null;
-
-            return (
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-80">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">カテゴリ別支出</h3>
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={data} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                            <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                            <XAxis type="number" hide />
-                            <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 12}} />
-                            <Tooltip formatter={(value) => `¥${value.toLocaleString()}`} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                            <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20}>
-                                {data.map((entry, index) => <Cell key={`cell-${index}`} fill={['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5]} />)}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
-                </div>
-            );
+        const formatDurationSimple = (seconds) => {
+            const absSeconds = Math.abs(seconds);
+            const units = [
+                { label: '日', val: 86400 },
+                { label: '分', val: 60 },
+                { label: '秒', val: 1 },
+            ];
+            for (const u of units) {
+                if (absSeconds >= u.val) return `${(seconds / u.val).toFixed(2)} ${u.label}`;
+            }
+            return `${seconds.toFixed(2)} 秒`;
         };
 
-        const FixedExpenseForm = ({ initialData, onSave, onCancel, categories }) => {
-            const [formData, setFormData] = useState(initialData || {
-                name: '', amount: '', category: categories[0] || '', payDay: 25, frequencyType: 'monthly', customMonths: [], note: ''
+        const formatDurationDetailed = (seconds) => {
+            const absSeconds = Math.abs(seconds);
+            const days = Math.floor(absSeconds / 86400);
+            const hours = Math.floor((absSeconds % 86400) / 3600);
+            const minutes = Math.floor((absSeconds % 3600) / 60);
+            const secs = parseFloat((absSeconds % 60).toFixed(2));
+            const parts = [];
+            if (days > 0) parts.push(`${days}日`);
+            if (hours > 0) parts.push(`${hours}時間`);
+            if (minutes > 0) parts.push(`${minutes}分`);
+            if (secs > 0 || parts.length === 0) parts.push(`${secs}秒`);
+            return parts.join(' ');
+        };
+
+        function App() {
+            const [initialAmount, setInitialAmount] = useState(1000);
+            const [halfLife, setHalfLife] = useState(109.77);
+            const [halfLifeUnit, setHalfLifeUnit] = useState('minutes');
+            const [isDetailedTime, setIsDetailedTime] = useState(false);
+            const [baseDate, setBaseDate] = useState(() => {
+                const now = new Date();
+                now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                return now.toISOString().slice(0, 19);
             });
 
-            const handleChange = (e) => {
-                const { name, value } = e.target;
-                setFormData(prev => ({ ...prev, [name]: name === 'amount' || name === 'payDay' ? parseInt(value) || 0 : value }));
-            };
+            // 既知のデータ用ステート
+            const [refAmount, setRefAmount] = useState(1000);
+            const [refDate, setRefDate] = useState(() => {
+                const now = new Date();
+                now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                return now.toISOString().slice(0, 19);
+            });
+            const [targetActivityDate, setTargetActivityDate] = useState(() => {
+                const now = new Date();
+                now.setHours(now.getHours() + 1);
+                now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                return now.toISOString().slice(0, 19);
+            });
 
-            const toggleMonth = (month) => {
-                setFormData(prev => {
-                    const months = prev.customMonths.includes(month)
-                        ? prev.customMonths.filter(m => m !== month)
-                        : [...prev.customMonths, month].sort((a,b) => a-b);
-                    return { ...prev, customMonths: months };
-                });
-            };
+            // time2用の差し引き量（残量）と測定日時
+            const [minusAmount, setMinusAmount] = useState(0);
+            const [minusDate, setMinusDate] = useState(() => {
+                const now = new Date();
+                now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                return now.toISOString().slice(0, 19);
+            });
 
-            const handleSubmit = (e) => {
-                e.preventDefault();
-                if (formData.frequencyType === 'custom' && formData.customMonths.length === 0) {
-                    alert("支払月を選択してください");
-                    return;
-                }
-                onSave(formData);
-            };
+            // 時計のズレ (秒単位)
+            const [clockDrift, setClockDrift] = useState(0);
 
-            return (
-                <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
-                        <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                            <h2 className="text-xl font-bold text-gray-800">固定費の登録・編集</h2>
-                            <button onClick={onCancel} className="text-gray-400 hover:text-gray-600"><Icon name="X" size={24} /></button>
-                        </div>
-                        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
-                            <div><label className="block text-sm font-medium text-gray-700 mb-1">名称</label><input type="text" name="name" value={formData.name} onChange={handleChange} className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" required /></div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div><label className="block text-sm font-medium text-gray-700 mb-1">金額</label><input type="number" name="amount" value={formData.amount} onChange={handleChange} className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" required /></div>
-                                <div><label className="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label><select name="category" value={formData.category} onChange={handleChange} className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none bg-white">{categories.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">支払日</label>
-                                <div className="flex items-center gap-2">
-                                    <span>毎月</span>
-                                    <select name="payDay" value={formData.payDay} onChange={handleChange} className="w-20 px-2 py-2 border border-gray-200 rounded-lg bg-white">{Array.from({length: 31}, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}</select>
-                                    <span>日</span>
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">頻度</label>
-                                <div className="flex gap-4">
-                                    <label><input type="radio" name="frequencyType" value="monthly" checked={formData.frequencyType === 'monthly'} onChange={handleChange} /> 毎月</label>
-                                    <label><input type="radio" name="frequencyType" value="custom" checked={formData.frequencyType === 'custom'} onChange={handleChange} /> 指定月</label>
-                                </div>
-                                {formData.frequencyType === 'custom' && (
-                                    <div className="grid grid-cols-6 gap-2 mt-2">
-                                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
-                                            <button key={m} type="button" onClick={() => toggleMonth(m)} className={`text-xs py-1 border rounded ${formData.customMonths.includes(m) ? 'bg-blue-600 text-white' : 'bg-white'}`}>{m}月</button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                            <div className="pt-4 flex gap-3">
-                                <button type="button" onClick={onCancel} className="flex-1 px-4 py-2 bg-gray-100 rounded-lg">キャンセル</button>
-                                <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg">登録</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            );
-        };
+            // 共通の目標放射能量ステート
+            const [targetAmount, setTargetAmount] = useState(500);
+            // 許容誤差(%)
+            const [marginPercent, setMarginPercent] = useState(5);
 
-        const FixedExpensesView = ({ categories, onSave, onDelete, fixedExpenses }) => {
-            const [isModalOpen, setIsModalOpen] = useState(false);
-            const [editingItem, setEditingItem] = useState(null);
+            const [presets, setPresets] = useState([
+                { id: '1', label: '18F', value: 109.77, unit: 'minutes' },
+            ]);
 
-            const handleSave = (data) => {
-                onSave({ ...data, id: editingItem?.id });
-                setIsModalOpen(false);
-                setEditingItem(null);
-            };
+            const [mainMode, setMainMode] = useState('amount'); // amount, time, activity, time2
+            const [calcMode, setCalcMode] = useState('relative');
+            const [elapsedTime, setElapsedTime] = useState(60);
+            const [elapsedTimeUnit, setElapsedTimeUnit] = useState('minutes');
+            const [targetDateInput, setTargetDateInput] = useState(() => {
+                const now = new Date();
+                now.setHours(now.getHours() + 1);
+                now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                return now.toISOString().slice(0, 19);
+            });
 
-            const calculateNextPayment = (item) => {
-                const today = new Date();
-                let targetMonth = today.getMonth() + 1;
-                let targetYear = today.getFullYear();
+            const results = useMemo(() => {
+                const hlSeconds = halfLife * TIME_UNITS[halfLifeUnit].toSeconds;
+                if (hlSeconds <= 0) return null;
+
+                let elapsedInSeconds = 0;
+                let currentRemaining = 0;
+                let baseDateObj = new Date();
+                let targetDateObj = new Date();
                 
-                if (today.getDate() > item.payDay) {
-                    targetMonth++;
-                    if (targetMonth > 12) { targetMonth = 1; targetYear++; }
-                }
+                // time2用
+                let plusResults = null;
+                let minusResults = null;
+                let effectiveStartAmount = 0;
 
-                if (item.frequencyType === 'custom') {
-                    let found = false;
-                    for(let i=0; i<12; i++) {
-                        let m = targetMonth + i;
-                        let y = targetYear;
-                        if(m > 12) { m -= 12; y++; }
-                        if(item.customMonths.includes(m)) {
-                            targetMonth = m; targetYear = y; found = true; break;
-                        }
+                if (mainMode === 'amount') {
+                    baseDateObj = new Date(baseDate);
+                    if (calcMode === 'relative') {
+                        elapsedInSeconds = elapsedTime * TIME_UNITS[elapsedTimeUnit].toSeconds;
+                        targetDateObj = new Date(baseDateObj.getTime() + elapsedInSeconds * 1000);
+                    } else {
+                        targetDateObj = new Date(targetDateInput);
+                        elapsedInSeconds = (targetDateObj.getTime() - baseDateObj.getTime()) / 1000;
                     }
-                    if(!found) return null;
-                }
-                return getNextBusinessDay(targetYear, targetMonth, item.payDay);
-            };
-
-            return (
-                <div className="space-y-6">
-                    <div className="flex justify-between items-center">
-                        <h2 className="text-xl font-bold flex items-center gap-2"><Icon name="Repeat" className="text-blue-500" /> 固定費</h2>
-                        <button onClick={() => { setEditingItem(null); setIsModalOpen(true); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center gap-2" disabled={fixedExpenses.length >= 20}><Icon name="Plus" size={16} /> 新規登録</button>
-                    </div>
-                    {(isModalOpen || editingItem) && <FixedExpenseForm initialData={editingItem} onSave={handleSave} onCancel={() => { setIsModalOpen(false); setEditingItem(null); }} categories={categories} />}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {fixedExpenses.map(item => {
-                            const nextDate = calculateNextPayment(item);
-                            const dateStr = nextDate ? `${nextDate.getFullYear()}/${nextDate.getMonth()+1}/${nextDate.getDate()}` : 'なし';
-                            const isAdjusted = nextDate && nextDate.getDate() !== item.payDay;
-                            return (
-                                <div key={item.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                                    <div className="flex justify-between">
-                                        <div><h3 className="font-bold">{item.name}</h3><span className="text-xs bg-gray-100 px-2 py-0.5 rounded">{item.category}</span></div>
-                                        <div className="text-right"><p className="font-bold">¥{item.amount.toLocaleString()}</p><p className="text-xs text-gray-400">{item.frequencyType === 'monthly' ? '毎月' : '指定月'}</p></div>
-                                    </div>
-                                    <div className="mt-4 pt-3 border-t flex justify-between items-center">
-                                        <div className="text-sm text-blue-600 font-bold flex items-center gap-1"><Icon name="CalendarDays" size={16} /> {dateStr} {isAdjusted && <span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 rounded">補正</span>}</div>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => { setEditingItem(item); setIsModalOpen(true); }} className="text-gray-400 hover:text-blue-500"><Icon name="Edit2" size={16} /></button>
-                                            <button onClick={() => onDelete(item.id)} className="text-gray-400 hover:text-red-500"><Icon name="Trash2" size={16} /></button>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            );
-        };
-
-        const MatrixCalendar = ({ expenses, categories, onClose }) => {
-            const [currentDate, setCurrentDate] = useState(new Date());
-            const [viewMode, setViewMode] = useState('scroll');
-
-            const year = currentDate.getFullYear();
-            const month = currentDate.getMonth();
-            const daysInMonth = new Date(year, month + 1, 0).getDate();
-            const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-
-            const matrixData = useMemo(() => {
-                const data = {};
-                const dailyTotals = {};
-                const categoryTotals = {};
-                categories.forEach(cat => { data[cat] = {}; categoryTotals[cat] = 0; });
-                expenses.forEach(e => {
-                    const d = new Date(e.date);
-                    if (d.getFullYear() === year && d.getMonth() === month) {
-                        const day = d.getDate();
-                        const cat = e.category;
-                        if (data[cat]) {
-                            data[cat][day] = (data[cat][day] || 0) + e.amount;
-                            categoryTotals[cat] += e.amount;
-                            dailyTotals[day] = (dailyTotals[day] || 0) + e.amount;
-                        }
+                    currentRemaining = initialAmount * Math.pow(0.5, elapsedInSeconds / hlSeconds);
+                } else if (mainMode === 'time') {
+                    baseDateObj = new Date(baseDate);
+                    if (initialAmount <= 0 || targetAmount <= 0) {
+                        elapsedInSeconds = 0;
+                        currentRemaining = initialAmount;
+                    } else {
+                        const ratio = targetAmount / initialAmount;
+                        elapsedInSeconds = -hlSeconds * Math.log2(ratio);
                     }
-                });
-                return { data, dailyTotals, categoryTotals };
-            }, [expenses, year, month, categories]);
+                    targetDateObj = new Date(baseDateObj.getTime() + elapsedInSeconds * 1000);
+                    currentRemaining = targetAmount;
+                } else if (mainMode === 'activity') {
+                    const rDate = new Date(refDate);
+                    const tDate = new Date(targetActivityDate);
+                    elapsedInSeconds = (tDate.getTime() - rDate.getTime()) / 1000;
+                    currentRemaining = refAmount * Math.pow(0.5, elapsedInSeconds / hlSeconds);
+                    baseDateObj = rDate;
+                    targetDateObj = tDate;
+                } else if (mainMode === 'time2') {
+                    const rDate = new Date(refDate);
+                    const mDate = new Date(minusDate);
+                    baseDateObj = rDate;
 
-            const grandTotal = Object.values(matrixData.categoryTotals).reduce((a, b) => a + b, 0);
+                    // 1. 残量を「既知の情報の日時」時点の値に換算する
+                    const elapsedMinusToRef = (rDate.getTime() - mDate.getTime()) / 1000;
+                    const effectiveMinusAmountAtRef = minusAmount * Math.pow(0.5, elapsedMinusToRef / hlSeconds);
 
-            return (
-                <div className="fixed inset-0 bg-white z-50 flex flex-col overflow-hidden">
-                    <div className="bg-blue-600 text-white p-4 flex justify-between items-center shadow-md z-20 no-print">
-                        <div className="flex items-center gap-4">
-                            <button onClick={onClose}><Icon name="Minimize2" /></button>
-                            <h2 className="text-xl font-bold">月間集計表</h2>
-                            <div className="flex bg-blue-800 rounded p-1 ml-4">
-                                <button onClick={() => setViewMode('scroll')} className={`px-3 py-1 rounded text-sm ${viewMode === 'scroll' ? 'bg-white text-blue-800' : 'text-blue-200'}`}>通常</button>
-                                <button onClick={() => setViewMode('fit')} className={`px-3 py-1 rounded text-sm ${viewMode === 'fit' ? 'bg-white text-blue-800' : 'text-blue-200'}`}>月表示</button>
-                            </div>
-                            {viewMode === 'fit' && <button onClick={() => window.print()} className="ml-2 px-3 py-1 bg-white text-blue-600 rounded flex gap-2 text-sm font-bold"><Icon name="Printer" size={16} /> PDF出力</button>}
-                        </div>
-                        <div className="flex gap-4 items-center">
-                            <div className="flex items-center bg-blue-700 rounded">
-                                <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="p-1"><Icon name="ChevronLeft" /></button>
-                                <span className="px-4 font-bold">{year}年 {month + 1}月</span>
-                                <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="p-1"><Icon name="ChevronRight" /></button>
-                            </div>
-                            <div className="text-right hidden sm:block"><p className="text-xs text-blue-200">合計</p><p className="text-xl font-bold">¥{grandTotal.toLocaleString()}</p></div>
-                        </div>
-                    </div>
+                    // 2. 既知の量から換算後の残量を差し引いた値を計算の基準にする
+                    effectiveStartAmount = refAmount - effectiveMinusAmountAtRef;
 
-                    <div id="matrix-calendar-container" className="flex-1 overflow-auto bg-gray-50 p-4">
-                         <div className="hidden print:block text-center mb-4">
-                            <h1 className="text-2xl font-bold">{year}年 {month + 1}月 家計簿集計</h1>
-                            <p>合計: ¥{grandTotal.toLocaleString()}</p>
-                        </div>
-                        <div className={`bg-white rounded shadow border inline-block ${viewMode === 'scroll' ? 'min-w-full' : 'w-full'} print-fit-table`}>
-                            <table className={`w-full border-collapse ${viewMode === 'fit' ? 'table-fixed' : ''}`}>
-                                <thead className="bg-gray-100 text-xs text-gray-500 font-medium">
-                                    <tr>
-                                        <th className="p-2 border border-gray-200 text-left sticky left-0 bg-gray-100 z-10 w-24">カテゴリ</th>
-                                        {days.map(d => (
-                                            <th key={d} className={`p-1 border border-gray-200 text-center ${viewMode === 'scroll' ? 'min-w-[40px]' : ''}`}>{d}</th>
-                                        ))}
-                                        <th className="p-2 border border-gray-200 text-right w-20">合計</th>
-                                    </tr>
-                                </thead>
-                                <tbody className={`text-sm ${viewMode === 'fit' ? 'text-[10px]' : ''}`}>
-                                    {categories.map(cat => (
-                                        <tr key={cat}>
-                                            <td className="p-2 border border-gray-200 font-medium sticky left-0 bg-white z-10 truncate">{cat}</td>
-                                            {days.map(d => (
-                                                <td key={d} className="p-1 border border-gray-200 text-right text-gray-600">
-                                                    {matrixData.data[cat][d] ? `¥${matrixData.data[cat][d].toLocaleString()}` : '-'}
-                                                </td>
-                                            ))}
-                                            <td className="p-2 border border-gray-200 font-bold text-right bg-gray-50">
-                                                {matrixData.categoryTotals[cat] > 0 ? `¥${matrixData.categoryTotals[cat].toLocaleString()}` : '-'}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    <tr className="bg-blue-50 font-bold">
-                                        <td className="p-2 border border-blue-200 sticky left-0 bg-blue-50 z-10">日計</td>
-                                        {days.map(d => (
-                                            <td key={d} className="p-1 border border-blue-200 text-right text-blue-700">
-                                                {matrixData.dailyTotals[d] ? `¥${matrixData.dailyTotals[d].toLocaleString()}` : '-'}
-                                            </td>
-                                        ))}
-                                        <td className="p-2 border border-blue-200 text-right text-blue-900">¥{grandTotal.toLocaleString()}</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        const DayDetailModal = ({ date, expenses, onClose, onEdit }) => {
-            const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-            return (
-                <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4" onClick={onClose}>
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
-                        <div className="bg-blue-600 p-4 text-white flex justify-between items-center">
-                            <div><h3 className="font-bold text-lg">{date.getFullYear()}年{date.getMonth()+1}月{date.getDate()}日</h3><p className="text-sm">合計: ¥{total.toLocaleString()}</p></div>
-                            <button onClick={onClose}><Icon name="X" className="text-white" /></button>
-                        </div>
-                        <div className="max-h-[60vh] overflow-y-auto p-4 space-y-3">
-                            {expenses.length === 0 ? <p className="text-center text-gray-400">支出なし</p> : expenses.map(e => (
-                                <div key={e.id} className="flex justify-between items-center p-3 border rounded hover:bg-gray-50 cursor-pointer" onClick={() => { onClose(); onEdit(e); }}>
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">¥</div>
-                                        <div><p className="font-bold">{e.merchant}</p><p className="text-xs text-gray-500">{e.category}</p></div>
-                                    </div>
-                                    <p className="font-bold">¥{e.amount.toLocaleString()}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        const CalendarView = ({ expenses, onEdit, categories }) => {
-            const [currentDate, setCurrentDate] = useState(new Date());
-            const [selectedDate, setSelectedDate] = useState(null);
-            const [isFullScreen, setIsFullScreen] = useState(false);
-
-            const year = currentDate.getFullYear();
-            const month = currentDate.getMonth();
-
-            const daysInMonth = new Date(year, month + 1, 0).getDate();
-            const days = Array.from({length: daysInMonth}, (_, i) => new Date(year, month, i + 1));
-            const firstDay = new Date(year, month, 1).getDay(); // 0:Sun
-            const emptyDays = Array(firstDay).fill(null);
-
-            const dailyData = useMemo(() => {
-                const map = {};
-                expenses.forEach(e => {
-                    const d = e.date; 
-                    if (!map[d]) map[d] = [];
-                    map[d].push(e);
-                });
-                return map;
-            }, [expenses]);
-
-            const getSummary = (list) => {
-                const s = {};
-                list.forEach(e => s[e.category] = (s[e.category] || 0) + e.amount);
-                return Object.entries(s).sort((a,b) => b[1] - a[1]);
-            };
-
-            const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-
-            return (
-                <>
-                    {isFullScreen && <MatrixCalendar expenses={expenses} categories={categories} onClose={() => setIsFullScreen(false)} />}
-                    {selectedDate && <DayDetailModal date={selectedDate} expenses={dailyData[formatDate(selectedDate)] || []} onClose={() => setSelectedDate(null)} onEdit={onEdit} />}
-                    
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-xl font-bold text-gray-800">{year}年 {month + 1}月</h2>
-                            <div className="flex gap-2">
-                                <button onClick={() => setIsFullScreen(true)} className="p-2 bg-blue-50 text-blue-600 rounded flex gap-1 font-bold text-sm"><Icon name="Maximize2" size={16} /> 集計表</button>
-                                <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="p-2 hover:bg-gray-100 rounded"><Icon name="ChevronLeft" /></button>
-                                <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="p-2 hover:bg-gray-100 rounded"><Icon name="ChevronRight" /></button>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-7 gap-px bg-gray-200 border rounded overflow-hidden">
-                            {['日','月','火','水','木','金','土'].map((d,i) => <div key={i} className={`bg-gray-50 p-2 text-center text-xs font-bold ${i===0?'text-red-500':i===6?'text-blue-500':''}`}>{d}</div>)}
-                            {[...emptyDays, ...days].map((d, i) => {
-                                if(!d) return <div key={i} className="bg-gray-50 min-h-[100px]"></div>;
-                                const dateStr = formatDate(d);
-                                const list = dailyData[dateStr] || [];
-                                const total = list.reduce((s,e)=>s+e.amount,0);
-                                const summary = getSummary(list);
-                                const isToday = formatDate(new Date()) === dateStr;
-
-                                return (
-                                    <div key={i} className="bg-white min-h-[100px] p-2 flex flex-col cursor-pointer hover:bg-blue-50 transition-colors" onClick={() => setSelectedDate(d)}>
-                                        <span className={`text-sm w-6 h-6 flex items-center justify-center rounded-full mb-1 ${isToday ? 'bg-blue-600 text-white' : ''}`}>{d.getDate()}</span>
-                                        <div className="space-y-1 overflow-hidden w-full">
-                                            {summary.slice(0,3).map(([c,v], idx) => (
-                                                <div key={idx} className="flex justify-between text-[10px] text-gray-600"><span className="truncate">{c}</span><span>¥{v.toLocaleString()}</span></div>
-                                            ))}
-                                        </div>
-                                        {total > 0 && <div className="mt-auto text-right text-xs font-bold text-blue-600 pt-1 border-t">¥{total.toLocaleString()}</div>}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </>
-            );
-        };
-
-        const SettingsView = ({ onDeleteAll, categories, merchants, notes, onUpdateSettings, fixedExpenses, onSaveFixedExpense, onDeleteFixedExpense }) => {
-            const [newCategory, setNewCategory] = useState('');
-            const [newMerchant, setNewMerchant] = useState('');
-            const [newNote, setNewNote] = useState('');
-            const [isFixedModalOpen, setIsFixedModalOpen] = useState(false);
-            const [editingFixed, setEditingFixed] = useState(null);
-            const fileInputRef = useRef(null);
-
-            const handleAdd = (list, item, key) => {
-                if(!item.trim() || list.includes(item.trim())) return;
-                onUpdateSettings({ [key]: [...list, item.trim()] });
-            };
-            const handleDel = (list, item, key) => {
-                if(confirm('削除しますか？')) onUpdateSettings({ [key]: list.filter(i => i !== item) });
-            };
-
-            const handleExport = async () => {
-                try {
-                    const allExpenses = await db.expenses.toArray();
-                    const allFixed = await db.fixedExpenses.toArray();
-                    const allSettings = await db.settings.toArray();
-                    
-                    const data = {
-                        version: 1,
-                        timestamp: new Date().toISOString(),
-                        expenses: allExpenses,
-                        fixedExpenses: allFixed,
-                        settings: allSettings
+                    const calcTimeForAmt = (amt) => {
+                        if (effectiveStartAmount <= 0 || amt <= 0) return 0;
+                        const ratio = amt / effectiveStartAmount;
+                        return -hlSeconds * Math.log2(ratio);
                     };
 
-                    const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `receipt_manager_backup_${new Date().toISOString().split('T')[0]}.json`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                } catch (e) {
-                    console.error(e);
-                    alert("エクスポートに失敗しました");
+                    elapsedInSeconds = calcTimeForAmt(targetAmount);
+                    targetDateObj = new Date(rDate.getTime() + elapsedInSeconds * 1000);
+                    currentRemaining = targetAmount;
+
+                    // プラス誤差 (+%)
+                    const amtPlus = targetAmount * (1 + marginPercent / 100);
+                    const elapsedPlus = calcTimeForAmt(amtPlus);
+                    const datePlus = new Date(rDate.getTime() + elapsedPlus * 1000);
+                    plusResults = {
+                        amount: amtPlus,
+                        elapsed: elapsedPlus,
+                        date: datePlus,
+                        adjustedDate: new Date(datePlus.getTime() + clockDrift * 1000)
+                    };
+
+                    // マイナス誤差 (-%)
+                    const amtMinus = targetAmount * (1 - marginPercent / 100);
+                    const elapsedMinus = calcTimeForAmt(amtMinus);
+                    const dateMinus = new Date(rDate.getTime() + elapsedMinus * 1000);
+                    minusResults = {
+                        amount: amtMinus,
+                        elapsed: elapsedMinus,
+                        date: dateMinus,
+                        adjustedDate: new Date(dateMinus.getTime() + clockDrift * 1000)
+                    };
                 }
-            };
 
-            const handleImport = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
+                const baseValForStats = (mainMode === 'activity' || mainMode === 'time2') 
+                    ? (mainMode === 'time2' ? effectiveStartAmount : refAmount) 
+                    : initialAmount;
 
-                const reader = new FileReader();
-                reader.onload = async (event) => {
-                    try {
-                        const data = JSON.parse(event.target.result);
-                        if (!data.expenses || !data.fixedExpenses) throw new Error("無効なデータ形式です");
+                const decayed = baseValForStats - currentRemaining;
+                const percentage = baseValForStats !== 0 ? (currentRemaining / baseValForStats) * 100 : 0;
 
-                        if (confirm(`現在のデータを全て削除し、バックアップファイルから復元しますか？\nデータ日時: ${data.timestamp || '不明'}\n件数: ${data.expenses.length}件`)) {
-                            await db.transaction('rw', db.expenses, db.fixedExpenses, db.settings, async () => {
-                                await db.expenses.clear();
-                                await db.fixedExpenses.clear();
-                                await db.settings.clear();
-                                
-                                await db.expenses.bulkAdd(data.expenses);
-                                await db.fixedExpenses.bulkAdd(data.fixedExpenses);
-                                if (data.settings) await db.settings.bulkAdd(data.settings);
-                            });
-                            alert("復元が完了しました。画面を更新します。");
-                            window.location.reload();
-                        }
-                    } catch (err) {
-                        alert("読み込みエラー: " + err.message);
-                    }
-                    e.target.value = ''; // Reset input
+                return {
+                    remaining: currentRemaining,
+                    decayed,
+                    percentage,
+                    halfLifeInSeconds: hlSeconds,
+                    elapsedInSeconds,
+                    baseDateObj,
+                    targetDateObj,
+                    effectiveStartAmount,
+                    adjustedTargetDateObj: new Date(targetDateObj.getTime() + clockDrift * 1000),
+                    plusResults,
+                    minusResults
                 };
-                reader.readAsText(file);
-            };
+            }, [initialAmount, halfLife, halfLifeUnit, mainMode, calcMode, elapsedTime, elapsedTimeUnit, baseDate, targetDateInput, targetAmount, refAmount, refDate, targetActivityDate, marginPercent, clockDrift, minusAmount, minusDate]);
 
-            return (
-                <div className="space-y-6">
-                    <div className="bg-white rounded-xl shadow p-6 space-y-8">
-                        <h3 className="text-lg font-bold flex gap-2"><Icon name="Settings" /> 設定</h3>
-                        
-                        {/* Categories */}
-                        <div>
-                            <h4 className="font-bold mb-2 flex gap-2"><Icon name="Tag" size={16} /> カテゴリ</h4>
-                            <div className="flex gap-2 mb-2">
-                                <input className="border rounded p-1 flex-1" value={newCategory} onChange={e => setNewCategory(e.target.value)} placeholder="新カテゴリ" />
-                                <button onClick={() => { handleAdd(categories, newCategory, 'categories'); setNewCategory(''); }} className="bg-blue-600 text-white px-3 rounded">追加</button>
-                            </div>
-                            <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto">{categories.map(c => <span key={c} className="bg-gray-100 px-2 py-1 rounded text-sm flex gap-1 items-center">{c} <button onClick={() => handleDel(categories, c, 'categories')} className="text-red-500"><Icon name="X" size={12} /></button></span>)}</div>
-                        </div>
-                        <hr />
-                        {/* Merchants */}
-                        <div>
-                            <h4 className="font-bold mb-2 flex gap-2"><Icon name="Store" size={16} /> 店名</h4>
-                            <div className="flex gap-2 mb-2">
-                                <input className="border rounded p-1 flex-1" value={newMerchant} onChange={e => setNewMerchant(e.target.value)} placeholder="新店名" />
-                                <button onClick={() => { handleAdd(merchants, newMerchant, 'merchants'); setNewMerchant(''); }} className="bg-blue-600 text-white px-3 rounded">追加</button>
-                            </div>
-                            <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto">{merchants.map(m => <span key={m} className="bg-gray-100 px-2 py-1 rounded text-sm flex gap-1 items-center">{m} <button onClick={() => handleDel(merchants, m, 'merchants')} className="text-red-500"><Icon name="X" size={12} /></button></span>)}</div>
-                        </div>
-                        <hr />
-                         {/* Fixed Expenses Settings List */}
-                        <div>
-                            <div className="flex justify-between items-center mb-2">
-                                <h4 className="font-bold flex gap-2"><Icon name="Repeat" size={16} /> 固定費設定</h4>
-                                <button onClick={() => { setEditingFixed(null); setIsFixedModalOpen(true); }} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-100">+ 追加</button>
-                            </div>
-                            <div className="space-y-2 max-h-60 overflow-y-auto bg-gray-50 p-2 rounded">
-                                {fixedExpenses.length === 0 && <p className="text-center text-xs text-gray-400">登録なし</p>}
-                                {fixedExpenses.map(item => (
-                                    <div key={item.id} className="bg-white p-2 rounded flex justify-between items-center shadow-sm">
-                                        <div>
-                                            <div className="text-sm font-bold">{item.name} <span className="text-xs font-normal bg-gray-100 px-1 rounded">{item.category}</span></div>
-                                            <div className="text-xs text-gray-500">¥{item.amount.toLocaleString()} ({item.frequencyType === 'monthly' ? '毎月' : '指定'})</div>
-                                        </div>
-                                        <div className="flex gap-1">
-                                            <button onClick={() => { setEditingFixed(item); setIsFixedModalOpen(true); }} className="p-1 text-gray-400 hover:text-blue-500"><Icon name="Edit2" size={14} /></button>
-                                            <button onClick={() => { if(confirm('削除しますか？')) onDeleteFixedExpense(item.id); }} className="p-1 text-gray-400 hover:text-red-500"><Icon name="Trash2" size={14} /></button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                        <hr />
-                        
-                        {/* Backup / Restore */}
-                        <div>
-                            <h4 className="font-bold mb-2 flex gap-2"><Icon name="Database" size={16} /> バックアップと復元</h4>
-                            <div className="flex flex-col sm:flex-row gap-4">
-                                <button onClick={handleExport} className="flex-1 bg-green-50 text-green-700 border border-green-200 px-4 py-3 rounded-lg flex items-center justify-center gap-2 hover:bg-green-100 transition-colors">
-                                    <Icon name="Download" size={20} />
-                                    <div className="text-left">
-                                        <div className="text-sm font-bold">バックアップを保存</div>
-                                        <div className="text-xs opacity-80">データをPCにダウンロード</div>
-                                    </div>
-                                </button>
-                                <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-orange-50 text-orange-700 border border-orange-200 px-4 py-3 rounded-lg flex items-center justify-center gap-2 hover:bg-orange-100 transition-colors">
-                                    <Icon name="Upload" size={20} />
-                                    <div className="text-left">
-                                        <div className="text-sm font-bold">データを復元</div>
-                                        <div className="text-xs opacity-80">保存したファイルを読み込む</div>
-                                    </div>
-                                    <input type="file" ref={fileInputRef} onChange={handleImport} accept=".json" className="hidden" />
-                                </button>
-                            </div>
-                            <p className="text-xs text-gray-500 mt-2">※ 復元を行うと、現在のデータは全て上書きされます。</p>
-                        </div>
-
-                        <hr />
-                        {/* Data Reset */}
-                        <div className="pt-2">
-                            <h4 className="text-red-600 font-bold text-sm mb-1">危険な操作</h4>
-                            <button onClick={onDeleteAll} className="border border-red-200 bg-red-50 text-red-600 px-4 py-2 rounded text-sm flex gap-2 items-center"><Icon name="Trash2" size={16} /> 全データを削除</button>
-                        </div>
-                    </div>
-
-                    {(isFixedModalOpen || editingFixed) && (
-                        <FixedExpenseForm 
-                            initialData={editingFixed} 
-                            onSave={(d) => { onSaveFixedExpense({...d, id: editingFixed?.id}); setIsFixedModalOpen(false); setEditingFixed(null); }}
-                            onCancel={() => { setIsFixedModalOpen(false); setEditingFixed(null); }}
-                            categories={categories}
-                        />
-                    )}
-                </div>
-            );
-        };
-
-        // --- Main App ---
-
-        const App = () => {
-            const [expenses, setExpenses] = useState([]);
-            const [fixedExpenses, setFixedExpenses] = useState([]);
-            const [settings, setSettings] = useState({ categories: DEFAULT_CATEGORIES, merchants: DEFAULT_MERCHANTS, notes: DEFAULT_NOTES });
-            
-            const [scannedData, setScannedData] = useState(null);
-            const [editingExpense, setEditingExpense] = useState(null);
-            const [viewingImage, setViewingImage] = useState(null);
-            const [activeTab, setActiveTab] = useState('receipts');
-            
-            const [isProcessing, setIsProcessing] = useState(false);
-            const [processStatus, setProcessStatus] = useState('');
-            const [scanProgress, setScanProgress] = useState(0);
-
-            // Init Data from Dexie
-            useEffect(() => {
-                const loadData = async () => {
-                    const allExpenses = await db.expenses.toArray();
-                    // Sort by date desc
-                    allExpenses.sort((a,b) => new Date(b.date) - new Date(a.date));
-                    setExpenses(allExpenses);
-
-                    const allFixed = await db.fixedExpenses.toArray();
-                    setFixedExpenses(allFixed);
-
-                    const savedSettings = await db.settings.get('general');
-                    if (savedSettings) {
-                        setSettings({
-                             categories: savedSettings.categories || DEFAULT_CATEGORIES,
-                             merchants: savedSettings.merchants || DEFAULT_MERCHANTS,
-                             notes: savedSettings.notes || DEFAULT_NOTES
-                        });
-                    } else {
-                        await db.settings.put({ id: 'general', ...settings });
-                    }
-                };
-                loadData();
-            }, []);
-
-            const updateSettings = async (newSettings) => {
-                const updated = { ...settings, ...newSettings };
-                setSettings(updated);
-                await db.settings.put({ id: 'general', ...updated });
-            };
-
-            const processFile = async (file) => {
-                setIsProcessing(true);
-                setProcessStatus('読み込み中...');
-                try {
-                    let text = "", attachment = null;
-                    if (file.type === 'application/pdf') {
-                        setProcessStatus('PDF解析中...');
-                        const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-                        const page = await pdf.getPage(1);
-                        const viewport = page.getViewport({ scale: 2.0 });
-                        const canvas = document.createElement('canvas');
-                        const ctx = canvas.getContext('2d');
-                        canvas.width = viewport.width; canvas.height = viewport.height;
-                        await page.render({ canvasContext: ctx, viewport }).promise;
-                        attachment = await compressImage(canvas.toDataURL());
-                        
-                        setProcessStatus('画像補正中...');
-                        const preprocessed = await preprocessImageForOCR(canvas.toDataURL());
-
-                        setProcessStatus('OCR解析中...');
-                        const worker = await Tesseract.createWorker(['jpn', 'eng'], 1, { logger: m => m.status === 'recognizing text' && setScanProgress(m.progress) });
-                        const { data } = await worker.recognize(preprocessed);
-                        text = data.text;
-                        await worker.terminate();
-                    } else {
-                        setProcessStatus('画像圧縮中...');
-                        attachment = await compressImage(file);
-                        
-                        setProcessStatus('画像補正中...');
-                        const preprocessed = await preprocessImageForOCR(attachment);
-
-                        setProcessStatus('OCR解析中...');
-                        const worker = await Tesseract.createWorker(['jpn', 'eng'], 1, { logger: m => m.status === 'recognizing text' && setScanProgress(m.progress) });
-                        const { data } = await worker.recognize(preprocessed);
-                        text = data.text;
-                        await worker.terminate();
-                    }
-                    const parsed = parseReceiptText(text);
-                    setScannedData({ ...parsed, category: settings.categories[0], attachment });
-                } catch(e) {
-                    console.error(e);
-                    alert('読み取りエラー: ' + e.message);
-                } finally {
-                    setIsProcessing(false);
-                    setScanProgress(0);
-                }
-            };
-
-            const handleSaveExpense = async (data) => {
-                try {
-                    if (editingExpense) {
-                        await db.expenses.update(editingExpense.id, data);
-                        setExpenses(prev => prev.map(e => e.id === editingExpense.id ? { ...e, ...data } : e));
-                        setEditingExpense(null);
-                    } else {
-                        const id = await db.expenses.add(data);
-                        // Add to state and sort
-                        const newItem = { ...data, id };
-                        setExpenses(prev => [...prev, newItem].sort((a,b) => new Date(b.date) - new Date(a.date)));
-                        setScannedData(null);
-                        if (activeTab === 'manual') alert('保存しました');
-                    }
-                } catch(e) {
-                    alert('保存エラー: 容量オーバーの可能性があります');
-                }
-            };
-
-            const handleDeleteExpense = async (id) => {
-                await db.expenses.delete(id);
-                setExpenses(prev => prev.filter(e => e.id !== id));
-            };
-
-            const handleSaveFixed = async (data) => {
-                if (data.id) {
-                    await db.fixedExpenses.update(data.id, data);
-                    setFixedExpenses(prev => prev.map(e => e.id === data.id ? { ...e, ...data } : e));
+            const chartData = useMemo(() => {
+                if (!results) return [];
+                const t = results.elapsedInSeconds;
+                const hl = results.halfLifeInSeconds;
+                const baseVal = (mainMode === 'activity' || mainMode === 'time2') 
+                    ? (mainMode === 'time2' ? results.effectiveStartAmount : refAmount) 
+                    : initialAmount;
+                
+                let minTime = Math.min(0, t);
+                let maxTime = Math.max(hl * 3, t * 1.5);
+                
+                if (t >= 0) {
+                    minTime = -hl * 0.5;
+                    maxTime = Math.max(t * 1.2, hl * 3);
                 } else {
-                    const id = await db.fixedExpenses.add(data);
-                    setFixedExpenses(prev => [...prev, { ...data, id }]);
+                    minTime = t * 1.2;
+                    maxTime = hl * 3;
                 }
-            };
 
-            const handleDeleteFixed = async (id) => {
-                await db.fixedExpenses.delete(id);
-                setFixedExpenses(prev => prev.filter(e => e.id !== id));
-            };
-
-            const handleDeleteAll = async () => {
-                if(confirm("全てのデータを削除します。よろしいですか？") && confirm("本当に復元できません。実行しますか？")) {
-                    await db.expenses.clear();
-                    await db.fixedExpenses.clear();
-                    await db.settings.clear();
-                    setExpenses([]);
-                    setFixedExpenses([]);
-                    setSettings({ categories: DEFAULT_CATEGORIES, merchants: DEFAULT_MERCHANTS, notes: DEFAULT_NOTES });
-                    alert("初期化しました");
+                const points = [];
+                const steps = 100;
+                const totalRange = maxTime - minTime;
+                for (let i = 0; i <= steps; i++) {
+                    const time = minTime + (totalRange / steps) * i;
+                    const amount = baseVal * Math.pow(0.5, time / hl);
+                    points.push({ t: time, amount });
                 }
-            };
+                return { points, minTime, maxTime, totalRange };
+            }, [results, initialAmount, refAmount, mainMode]);
 
-            const manualData = { date: new Date().toISOString().split('T')[0], amount: '', merchant: '', category: settings.categories[0], note: '' };
+            const Graph = () => {
+                if (!results || chartData.points.length === 0) return null;
+                const width = 600;
+                const height = 240;
+                const padding = 40;
+                const baseVal = (mainMode === 'activity' || mainMode === 'time2') 
+                    ? (mainMode === 'time2' ? results.effectiveStartAmount : refAmount) 
+                    : initialAmount;
+                const maxYData = Math.max(baseVal, ...chartData.points.map(p => p.amount));
+                const yAxisMax = maxYData * 1.1;
+                const getX = (t) => padding + ((t - chartData.minTime) / chartData.totalRange) * (width - padding * 2);
+                const getY = (amt) => height - padding - (amt / yAxisMax) * (height - padding * 2);
+                const pathD = `M ${chartData.points.map(p => `${getX(p.t)},${getY(p.amount)}`).join(' L ')}`;
+
+                return (
+                    <div className="w-full bg-white rounded-lg shadow-inner border border-slate-200">
+                        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto text-[10px]">
+                            <line x1={padding} y1={height-padding} x2={width-padding} y2={height-padding} stroke="#cbd5e1" strokeWidth="2" />
+                            <line x1={padding} y1={padding} x2={padding} y2={height-padding} stroke="#cbd5e1" strokeWidth="2" />
+                            <path d={pathD} fill="none" stroke="#3b82f6" strokeWidth="2.5" />
+                            <circle cx={getX(results.elapsedInSeconds)} cy={getY(results.remaining)} r="5" fill="#ef4444" stroke="white" strokeWidth="2" />
+                            <text x={padding-5} y={getY(baseVal)} textAnchor="end" fill="#3b82f6" fontWeight="bold">開始点</text>
+                            <text x={getX(results.elapsedInSeconds)} y={getY(results.remaining)-10} textAnchor="middle" fill="#ef4444" fontWeight="bold">目標</text>
+                        </svg>
+                    </div>
+                );
+            };
 
             return (
-                <div className="min-h-screen flex flex-col">
-                    {isProcessing && <LoadingOverlay status={processStatus} progress={scanProgress} />}
-                    {viewingImage && <ImageModal src={viewingImage} onClose={() => setViewingImage(null)} />}
-                    
-                    {/* Header */}
-                    <header className="bg-white border-b sticky top-0 z-30 px-4 h-16 flex items-center justify-between shadow-sm">
-                        <div className="flex items-center gap-2 font-bold text-xl text-blue-600">
-                            <Icon name="FileText" /> Receipt Manager (Local)
-                        </div>
-                        {/* Tabs */}
-                        <div className="flex gap-4 overflow-x-auto no-scrollbar">
+                <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
+                    <div className="max-w-6xl mx-auto">
+                        <header className="mb-6 flex items-center gap-3">
+                            <div className="p-3 bg-blue-600 rounded-lg shadow-lg"><Activity className="w-6 h-6 text-white" /></div>
+                            <div>
+                                <h1 className="text-xl font-bold text-slate-900">減衰計算表</h1>
+                                <p className="text-slate-500 text-xs">Radioactive Decay Calculator</p>
+                            </div>
+                        </header>
+
+                        {/* タブナビゲーション */}
+                        <div className="flex flex-wrap md:flex-nowrap rounded-xl bg-white shadow-sm border border-slate-200 p-1 mb-6 gap-1">
                             {[
-                                { id: 'receipts', icon: 'LayoutDashboard', label: '貼付' },
-                                { id: 'manual', icon: 'PenLine', label: '手入力' },
-                                { id: 'fixed_expenses', icon: 'Repeat', label: '固定費' },
-                                { id: 'history', icon: 'History', label: '履歴' },
-                                { id: 'calendar', icon: 'CalendarRange', label: 'カレンダー' },
-                                { id: 'settings', icon: 'Settings', label: '設定' },
-                            ].map(t => (
-                                <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex items-center gap-1 text-sm font-medium pb-1 border-b-2 transition-colors whitespace-nowrap ${activeTab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'}`}>
-                                    <Icon name={t.icon} size={16} /> {t.label}
+                                { id: 'amount', label: '残存量を求める', icon: Calculator },
+                                { id: 'time', label: '時間を求める', icon: Hourglass },
+                                { id: 'activity', label: '放射能量を求める', icon: LineChart },
+                                { id: 'time2', label: '時間を求める（ 140 ）', icon: Hourglass },
+                            ].map(tab => (
+                                <button key={tab.id} onClick={() => setMainMode(tab.id)} className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-2 rounded-lg text-[11px] font-bold transition-all ${mainMode === tab.id ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                    <tab.icon className="w-4 h-4" /> {tab.label}
                                 </button>
                             ))}
                         </div>
-                    </header>
 
-                    {/* Main Content */}
-                    <main className="flex-1 max-w-5xl mx-auto w-full p-4 lg:p-8">
-                        {editingExpense && (
-                            <ExpenseForm 
-                                initialData={editingExpense} 
-                                onSave={handleSaveExpense} 
-                                onCancel={() => setEditingExpense(null)} 
-                                isModal={true} title="記録の編集"
-                                categories={settings.categories} merchants={settings.merchants} notes={settings.notes}
-                            />
-                        )}
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                            <div className="lg:col-span-5 space-y-6">
+                                <section className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                                    <h2 className="flex items-center gap-2 font-bold text-sm mb-4 text-slate-700"><RefreshCw className="w-4 h-4 text-blue-500" /> パラメータ設定</h2>
 
-                        {activeTab === 'receipts' && (
-                            scannedData ? (
-                                <div className="animate-in fade-in">
-                                    <button onClick={() => setScannedData(null)} className="mb-4 text-sm text-gray-500 flex gap-1 items-center"><Icon name="ArrowLeft" size={14} /> 戻る</button>
-                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                        <div className="bg-gray-100 rounded-xl p-4 flex items-center justify-center min-h-[300px]">
-                                            {scannedData.attachment ? <img src={scannedData.attachment} className="max-h-[60vh] object-contain rounded shadow" /> : <p className="text-gray-400">No Image</p>}
+                                    {(mainMode === 'activity' || mainMode === 'time2') ? (
+                                        <div className="space-y-4 animate-in fade-in duration-300">
+                                            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                                                <label className="block text-[10px] font-bold text-blue-800 mb-1">既知の情報 (基準データ)</label>
+                                                <div className="flex gap-2 mb-2">
+                                                    <input type="number" value={refAmount} onChange={(e) => setRefAmount(Number(e.target.value))} className="w-full px-2 py-1.5 border border-blue-200 rounded text-sm" />
+                                                    <span className="text-xs self-center font-bold text-blue-600">MBq</span>
+                                                </div>
+                                                <input type="datetime-local" step="1" value={refDate} onChange={(e) => setRefDate(e.target.value)} className="w-full px-2 py-1.5 border border-blue-200 rounded text-sm" />
+                                            </div>
+
+                                            {mainMode === 'time2' && (
+                                                <div className="flex flex-col items-center py-1">
+                                                    <ArrowDown className="w-4 h-4 text-slate-300" />
+                                                </div>
+                                            )}
+
+                                            {mainMode === 'time2' && (
+                                                <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+                                                    <label className="block text-[10px] font-bold text-indigo-800 mb-1">残量 (差し引き分)</label>
+                                                    <div className="grid grid-cols-1 gap-2">
+                                                        <div className="flex gap-2 items-center">
+                                                            <input type="number" value={minusAmount} onChange={(e) => setMinusAmount(Number(e.target.value))} className="w-full px-2 py-1.5 border border-indigo-200 rounded text-sm bg-white" placeholder="量" />
+                                                            <span className="text-xs font-bold text-indigo-600">MBq</span>
+                                                        </div>
+                                                        <div className="flex flex-col gap-1">
+                                                            <label className="text-[9px] text-indigo-400">測定日時</label>
+                                                            <input type="datetime-local" step="1" value={minusDate} onChange={(e) => setMinusDate(e.target.value)} className="w-full px-2 py-1 border border-indigo-200 rounded text-xs" />
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-2 text-[10px] text-indigo-500 flex flex-col gap-0.5 px-1 border-t border-indigo-100 pt-2">
+                                                        <div className="flex justify-between italic">
+                                                            <span>補正後の基準時放射能量:</span>
+                                                            <span className="font-bold">{results ? formatNumber(results.effectiveStartAmount) : '-'} MBq</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                                <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                                    {mainMode === 'activity' ? '求めたい日時' : '目標の放射能量'}
+                                                </label>
+                                                {mainMode === 'activity' ? (
+                                                    <input type="datetime-local" step="1" value={targetActivityDate} onChange={(e) => setTargetActivityDate(e.target.value)} className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+                                                ) : (
+                                                    <div className="space-y-3">
+                                                        <div className="flex gap-2">
+                                                            <input type="number" value={targetAmount} onChange={(e) => setTargetAmount(Math.max(0, Number(e.target.value)))} className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+                                                            <span className="text-xs self-center font-bold text-slate-500">MBq</span>
+                                                        </div>
+                                                        <div className="pt-2 border-t border-slate-200 grid grid-cols-2 gap-4">
+                                                            <div>
+                                                                <label className="block text-[10px] font-bold text-slate-500 mb-1 flex items-center gap-1">許容誤差 (%) <span className="font-normal text-slate-400">±{marginPercent}%</span></label>
+                                                                <input type="range" min="0" max="20" step="0.1" value={marginPercent} onChange={(e) => setMarginPercent(Number(e.target.value))} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600" />
+                                                            </div>
+                                                            <div>
+                                                                <label className="block text-[10px] font-bold text-slate-500 mb-1 flex items-center gap-1">時計2のズレ (秒) <span className="font-normal text-slate-400">{clockDrift > 0 ? '+' : ''}{clockDrift}s</span></label>
+                                                                <input type="number" value={clockDrift} onChange={(e) => setClockDrift(Number(e.target.value))} className="w-full px-2 py-1 border border-slate-300 rounded text-xs" placeholder="±秒" />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                        <ExpenseForm 
-                                            initialData={scannedData} 
-                                            onSave={handleSaveExpense} 
-                                            onCancel={() => setScannedData(null)} 
-                                            isModal={false} 
-                                            categories={settings.categories} merchants={settings.merchants} notes={settings.notes}
-                                        />
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                                <label className="block text-[10px] font-bold text-slate-500 mb-1">基準日時 (t=0)</label>
+                                                <input type="datetime-local" step="1" value={baseDate} onChange={(e) => setBaseDate(e.target.value)} className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="block text-[10px] font-medium text-slate-600 mb-1">初期量 (N₀)</label>
+                                                    <div className="flex gap-1 items-center">
+                                                        <input type="number" value={initialAmount} onChange={(e) => setInitialAmount(Math.max(0, Number(e.target.value)))} className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+                                                        <span className="text-[10px] font-bold">MBq</span>
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-medium text-slate-600 mb-1">目標量 (N)</label>
+                                                    <input type="number" disabled={mainMode !== 'time'} value={targetAmount} onChange={(e) => setTargetAmount(Math.max(0, Number(e.target.value)))} className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm disabled:bg-slate-100" />
+                                                </div>
+                                            </div>
+                                            {mainMode === 'amount' && (
+                                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                                                    <label className="block text-[10px] font-bold text-blue-800 mb-1">経過時間指定</label>
+                                                    <div className="flex gap-2">
+                                                        <input type="number" value={elapsedTime} onChange={(e) => setElapsedTime(Number(e.target.value))} className="flex-1 px-2 py-1.5 border border-blue-200 rounded text-sm" />
+                                                        <select value={elapsedTimeUnit} onChange={(e) => setElapsedTimeUnit(e.target.value)} className="w-20 px-1 py-1.5 border border-blue-200 rounded text-xs bg-white">
+                                                            {Object.entries(TIME_UNITS).map(([k, u]) => <option key={k} value={k}>{u.label}</option>)}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    <div className="mt-4 pt-4 border-t border-slate-100">
+                                        <label className="block text-[10px] font-medium text-slate-600 mb-1">半減期 (T₁/₂)</label>
+                                        <div className="flex gap-2">
+                                            <input type="number" value={halfLife} onChange={(e) => setHalfLife(Math.max(0.001, Number(e.target.value)))} className="flex-1 px-2 py-1.5 border border-slate-300 rounded text-sm" />
+                                            <select value={halfLifeUnit} onChange={(e) => setHalfLifeUnit(e.target.value)} className="w-20 px-1 py-1.5 border border-slate-300 rounded text-xs bg-slate-50">
+                                                {Object.entries(TIME_UNITS).map(([k, u]) => <option key={k} value={k}>{u.label}</option>)}
+                                            </select>
+                                        </div>
                                     </div>
-                                </div>
-                            ) : (
-                                <div className="space-y-6 animate-in fade-in">
-                                    <DashboardChart expenses={expenses} />
-                                    <div className="bg-white p-6 rounded-xl shadow-sm border">
-                                        <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Icon name="Plus" /> レシート読込</h2>
-                                        <FileUploader onFileProcess={processFile} />
+                                </section>
+
+                                <section className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                    <h3 className="text-[10px] font-bold text-slate-500 flex items-center gap-2 mb-2"><Info className="w-3 h-3" /> 核種</h3>
+                                    <div className="flex flex-wrap gap-2">
+                                        {presets.map((item) => (
+                                            <button key={item.id} onClick={() => { setHalfLife(item.value); setHalfLifeUnit(item.unit); }} className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-600 text-xs rounded border border-slate-200 transition-colors">{item.label}</button>
+                                        ))}
                                     </div>
-                                </div>
-                            )
-                        )}
-
-                        {activeTab === 'manual' && (
-                            <div className="max-w-xl mx-auto animate-in fade-in">
-                                <h2 className="text-lg font-bold mb-4">手入力で追加</h2>
-                                <ExpenseForm 
-                                    initialData={manualData} 
-                                    onSave={handleSaveExpense} 
-                                    isModal={false} 
-                                    categories={settings.categories} merchants={settings.merchants} notes={settings.notes}
-                                />
+                                </section>
                             </div>
-                        )}
 
-                        {activeTab === 'fixed_expenses' && (
-                            <FixedExpensesView 
-                                categories={settings.categories} 
-                                onSave={handleSaveFixed} 
-                                onDelete={handleDeleteFixed} 
-                                fixedExpenses={fixedExpenses} 
-                            />
-                        )}
+                            <div className="lg:col-span-7 space-y-6">
+                                <section className="space-y-4">
+                                    <div className={`bg-white p-5 rounded-xl shadow-sm border-l-4 ${mainMode.includes('time') ? 'border-amber-500' : 'border-blue-500'}`}>
+                                        <p className="text-[10px] text-slate-500 mb-1">
+                                            {mainMode.includes('time') ? '目標放射能量に到達するまでの時間' : '計算された放射能量 (MBq)'}
+                                        </p>
+                                        <p className={`text-2xl font-bold ${mainMode.includes('time') ? 'text-amber-600' : 'text-blue-600'}`}>
+                                            {results ? (mainMode.includes('time') ? (isDetailedTime ? formatDurationDetailed(results.elapsedInSeconds) : formatDurationSimple(results.elapsedInSeconds)) : formatNumber(results.remaining)) : '-'}
+                                        </p>
+                                        <div className="flex justify-between items-center mt-2">
+                                            <p className="text-[10px] text-slate-400">
+                                                開始点に対する割合: {results ? results.percentage.toFixed(4) : '-'} %
+                                            </p>
+                                            <label className="inline-flex items-center gap-1 cursor-pointer">
+                                                <input type="checkbox" checked={isDetailedTime} onChange={(e) => setIsDetailedTime(e.target.checked)} className="w-3 h-3" />
+                                                <span className="text-[9px] text-slate-400">経過時間を詳細表示</span>
+                                            </label>
+                                        </div>
+                                    </div>
 
-                        {activeTab === 'history' && (
-                            <div className="animate-in fade-in">
-                                <h2 className="text-lg font-bold mb-4">履歴一覧 ({expenses.length}件)</h2>
-                                <ExpenseList 
-                                    expenses={expenses} 
-                                    onDelete={handleDeleteExpense} 
-                                    onEdit={setEditingExpense} 
-                                    onViewImage={setViewingImage}
-                                    categories={settings.categories} merchants={settings.merchants} notes={settings.notes}
-                                />
+                                    {/* 到着予測日時 (メイン) */}
+                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                        <div className="space-y-3">
+                                            <div className="flex justify-between items-center">
+                                                <div className="flex items-center gap-2 text-[10px] text-slate-500"><Clock className="w-3 h-3"/> 時計1（基準）予測日時</div>
+                                                <span className="text-sm font-mono text-slate-700">{results ? formatDate(results.targetDateObj) : '-'}</span>
+                                            </div>
+                                            <div className="h-px bg-slate-200 w-full"></div>
+                                            <div className="flex justify-between items-center">
+                                                <div className="flex items-center gap-2 text-[11px] font-bold text-blue-600"><Clock className="w-4 h-4"/> 時計2（補正）予測日時</div>
+                                                <span className="text-lg font-mono font-bold text-blue-700">{results ? formatDate(results.adjustedTargetDateObj) : '-'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 誤差範囲の表示 (time2モードのみ) */}
+                                    {mainMode === 'time2' && results && results.plusResults && (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-top-2 duration-300">
+                                            <div className="bg-white p-4 rounded-xl border border-slate-200 border-l-4 border-indigo-400">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <p className="text-[10px] font-bold text-indigo-600">誤差上限 (+{marginPercent}%)</p>
+                                                    <span className="text-xs font-bold text-slate-700">{formatNumber(results.plusResults.amount)} MBq</span>
+                                                </div>
+                                                <div className="space-y-1 text-[9px]">
+                                                    <div className="flex justify-between text-slate-500"><span>時計1:</span><span>{formatDate(results.plusResults.date)}</span></div>
+                                                    <div className="flex justify-between font-bold text-indigo-700"><span>時計2:</span><span>{formatDate(results.plusResults.adjustedDate)}</span></div>
+                                                </div>
+                                            </div>
+                                            <div className="bg-white p-4 rounded-xl border border-slate-200 border-l-4 border-indigo-400">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <p className="text-[10px] font-bold text-indigo-600">誤差下限 (-{marginPercent}%)</p>
+                                                    <span className="text-xs font-bold text-slate-700">{formatNumber(results.minusResults.amount)} MBq</span>
+                                                </div>
+                                                <div className="space-y-1 text-[9px]">
+                                                    <div className="flex justify-between text-slate-500"><span>時計1:</span><span>{formatDate(results.minusResults.date)}</span></div>
+                                                    <div className="flex justify-between font-bold text-indigo-700"><span>時計2:</span><span>{formatDate(results.minusResults.adjustedDate)}</span></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {mainMode === 'time2' && results && results.plusResults && (
+                                        <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 flex items-start gap-2">
+                                            <AlertCircle className="w-4 h-4 text-indigo-500 mt-0.5" />
+                                            <div className="text-[10px] text-indigo-700 leading-relaxed">
+                                                補正後(時計2)の許容範囲帯 ({marginPercent}%) :<br/>
+                                                <span className="font-bold text-sm tracking-tight">{formatDate(results.plusResults.adjustedDate)}</span> 〜 <span className="font-bold text-sm tracking-tight">{formatDate(results.minusResults.adjustedDate)}</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </section>
+
+                                <section className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                                    <h3 className="font-bold text-xs text-slate-700 flex items-center gap-2 mb-4"><Activity className="w-4 h-4 text-slate-400" /> 減衰グラフ</h3>
+                                    <Graph />
+                                </section>
                             </div>
-                        )}
-
-                        {activeTab === 'calendar' && (
-                            <CalendarView expenses={expenses} onEdit={setEditingExpense} categories={settings.categories} />
-                        )}
-
-                        {activeTab === 'settings' && (
-                            <SettingsView 
-                                onDeleteAll={handleDeleteAll} 
-                                categories={settings.categories} merchants={settings.merchants} notes={settings.notes} 
-                                onUpdateSettings={updateSettings}
-                                fixedExpenses={fixedExpenses}
-                                onSaveFixedExpense={handleSaveFixed}
-                                onDeleteFixedExpense={handleDeleteFixed}
-                            />
-                        )}
-                    </main>
+                        </div>
+                    </div>
                 </div>
             );
-        };
+        }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
